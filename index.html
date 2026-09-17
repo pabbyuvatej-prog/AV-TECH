@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AV Impacttetur — Simulation</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#071018;color:#e8f0f5;font-family:system-ui,sans-serif}
+.wrap{max-width:1200px;margin:auto;padding:16px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:22px;margin:0}.tag{font-size:12px;color:#8fa8b8}
+.grid{display:grid;grid-template-columns:1.4fr .8fr;gap:14px;margin-top:14px}
+.panel{background:#0d1922;border:1px solid #233642;border-radius:12px;padding:12px}
+canvas{width:100%;display:block;background:#050b10;border-radius:10px;border:1px solid #233642}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.m{padding:9px;background:#101f29;border-radius:9px}
+.m b{display:block;font-size:18px}.m span{font-size:11px;color:#8fa8b8}
+.bar{height:8px;background:#182a35;border-radius:5px;overflow:hidden;margin-top:6px}.fill{height:100%;width:0;background:#56d6a3}
+.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+button{background:#142833;color:#e8f0f5;border:1px solid #31505e;border-radius:8px;padding:9px 13px;min-width:48px}
+button:active{transform:translateY(1px)}.status{font-size:12px;color:#9eb4c2;margin-top:8px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top"><div><h1>AV Impacttetur // FLIGHT SIMULATION</h1><div class="tag">Reduced-order engineering game • not flight-certified</div></div>
+<div id="mode">READY</div></div>
+<div class="grid">
+<section class="panel">
+<canvas id="scene" width="900" height="520" aria-label="Animated vehicle flight scene"></canvas>
+<div class="controls">
+<button id="launch">LAUNCH / SPACE</button><button id="pause">PAUSE / P</button><button id="reset">RESET / R</button>
+<button id="up">PITCH +</button><button id="down">PITCH −</button><button id="boost">BOOST</button>
+</div><div class="status" id="status">Press LAUNCH or Space. W/S controls pitch; A/D rolls the visualization.</div>
+</section>
+<aside class="panel">
+<div class="metrics">
+<div class="m"><b id="h">10,000</b><span>ALTITUDE m</span></div>
+<div class="m"><b id="v">1,200</b><span>VELOCITY m/s</span></div>
+<div class="m"><b id="a">2.00°</b><span>ANGLE OF ATTACK</span></div>
+<div class="m"><b id="q">1.00°/s</b><span>PITCH RATE</span></div>
+<div class="m"><b id="cd">0.218</b><span>DRAG COEFFICIENT</span></div>
+<div class="m"><b id="temp">223 K</b><span>THERMAL STATE</span></div>
+<div class="m"><b id="shock">9.12 mm</b><span>SHOCK STAND-OFF</span></div>
+<div class="m"><b id="def">0.000 mm</b><span>RADIAL DEFORMATION</span></div>
+</div>
+<div style="margin-top:12px"><div>Actuator</div><div class="bar"><div class="fill" id="act"></div></div>
+<div class="status" id="acttxt">0%</div></div>
+<div style="margin-top:12px"><div>Thermal load</div><div class="bar"><div class="fill" id="therm"></div></div>
+<div class="status" id="thermtxt">0%</div></div>
+<div style="margin-top:12px"><div>Flight log</div><canvas id="graph" width="500" height="180"></canvas></div>
+</aside>
+</div>
+</div>
+<script>
+(() => {
+const scene=document.getElementById("scene"), c=scene.getContext("2d");
+const graph=document.getElementById("graph"), g=graph.getContext("2d");
+let S={running:false,paused:false,t:0,h:10000,v:1200,alpha:2*Math.PI/180,q:1*Math.PI/180,roll:0,delta:0,boost:0,temp:223.26,def:0,shock:9.12,cd:.21755,history:[]};
+let keys={}; let last=0;
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+function reset(){S={running:false,paused:false,t:0,h:10000,v:1200,alpha:2*Math.PI/180,q:Math.PI/180,roll:0,delta:0,boost:0,temp:223.26,def:0,shock:9.12,cd:.21755,history:[]};update();}
+function launch(){S.running=true;S.paused=false;document.getElementById("mode").textContent="RUNNING";}
+function controlPitch(x){S.q+=x*.045;S.alpha+=x*.010;}
+function step(dt){
+ if(!S.running||S.paused)return;
+ let pitch=(keys.w||keys.ArrowUp?1:0)-(keys.s||keys.ArrowDown?1:0);
+ let roll=(keys.a||keys.ArrowLeft?1:0)-(keys.d||keys.ArrowRight?1:0);
+ let boost=(keys[" "]||keys.boost)?1:0;
+ S.boost+=(boost-S.boost)*Math.min(1,dt*5);
+ let qdot=-.65*S.q-.12*S.alpha+.90*pitch;
+ S.q+=qdot*dt;
+ S.alpha+=S.q*dt + pitch*.004*dt;
+ S.alpha=clamp(S.alpha,-10*Math.PI/180,10*Math.PI/180);
+ S.roll+=roll*1.8*dt;
+ let thrust=(boost?7200:3200);
+ let rho=.413511*Math.exp(-(S.h-10000)/8500);
+ let dyn=.5*rho*S.v*S.v;
+ S.delta+=((.5*S.q-.010*qdot)-S.delta)*dt/.025;
+ S.delta=clamp(S.delta,-.261799,.261799);
+ S.v+=((thrust/0.525)-dyn*(.21755+.05*S.delta)*.01131/0.525-1.5*Math.sin(S.alpha))*dt;
+ S.v=clamp(S.v,50,2500);
+ S.h+=S.v*Math.sin(S.alpha)*dt;
+ S.h=clamp(S.h,0,50000);
+ S.temp=223.26+Math.min(1.2,Math.abs(S.boost)+Math.abs(S.alpha)*3)*590;
+ S.def=.1851*Math.min(1,S.temp/821.45);
+ S.shock=9.021+0.75*(S.temp/821.45)+Math.abs(S.alpha)*18;
+ S.cd=.21755+.05*S.delta+.004*Math.abs(S.alpha);
+ S.t+=dt;
+ if(S.t%0.04<dt)S.history.push({v:S.v,h:S.h}); if(S.history.length>120)S.history.shift();
+}
+function txt(id,x){document.getElementById(id).textContent=x}
+function update(){
+ txt("h",Math.round(S.h).toLocaleString());txt("v",S.v.toFixed(1));txt("a",(S.alpha*180/Math.PI).toFixed(2)+"°");
+ txt("q",(S.q*180/Math.PI).toFixed(2)+"°/s");txt("cd",S.cd.toFixed(4));txt("temp",S.temp.toFixed(0)+" K");
+ txt("shock",S.shock.toFixed(2)+" mm");txt("def",S.def.toFixed(3)+" mm");
+ let ap=clamp(Math.abs(S.delta)/.261799*100,0,100),tp=clamp((S.temp-223.26)/650*100,0,100);
+ document.getElementById("act").style.width=ap+"%";document.getElementById("acttxt").textContent=ap.toFixed(0)+"%";
+ document.getElementById("therm").style.width=tp+"%";document.getElementById("thermtxt").textContent=tp.toFixed(0)+"%";
+ draw();drawGraph();
+}
+function draw(){
+ c.clearRect(0,0,scene.width,scene.height);
+ let grad=c.createLinearGradient(0,0,0,520);grad.addColorStop(0,"#07131e");grad.addColorStop(1,"#02070b");c.fillStyle=grad;c.fillRect(0,0,900,520);
+ c.strokeStyle="#17303c";for(let y=70;y<520;y+=55){c.beginPath();c.moveTo(0,y);c.lineTo(900,y);c.stroke()}
+ c.fillStyle="#8fa8b8";c.font="13px system-ui";c.fillText("10 km reference environment",18,28);
+ let x=450,y=300;
+ c.save();c.translate(x,y);c.rotate(S.roll*.25+S.alpha);
+ c.strokeStyle="rgba(90,200,240,.25)";c.lineWidth=18;c.beginPath();c.moveTo(45,0);c.lineTo(105,0);c.stroke();
+ c.fillStyle="#d7e2e8";c.beginPath();c.moveTo(-90,0);c.lineTo(-25,-28);c.lineTo(75,-16);c.lineTo(100,0);c.lineTo(75,16);c.lineTo(-25,28);c.closePath();c.fill();
+ c.fillStyle="#273943";c.beginPath();c.moveTo(-90,0);c.lineTo(-25,-28);c.lineTo(-5,0);c.closePath();c.fill();
+ c.strokeStyle="#62cfe8";c.lineWidth=3;c.beginPath();c.arc(108,0,28,0,Math.PI*2);c.stroke();
+ c.strokeStyle="#56d6a3";c.lineWidth=2;c.beginPath();c.moveTo(-118,0);c.lineTo(-190,0);c.stroke();
+ c.restore();
+ c.fillStyle="#8fa8b8";c.fillText("SHOCK",540,250);c.fillText(S.shock.toFixed(1)+" mm",540,267);
+ c.fillText("THERMAL",18,470);c.fillText(S.temp.toFixed(0)+" K",18,487);
+}
+function drawGraph(){
+ g.clearRect(0,0,500,180);g.fillStyle="#071018";g.fillRect(0,0,500,180);g.strokeStyle="#27404c";
+ g.beginPath();g.moveTo(0,90);g.lineTo(500,90);g.stroke();
+ if(S.history.length<2)return;let mn=Math.min(...S.history.map(z=>z.v)),mx=Math.max(...S.history.map(z=>z.v));if(mx-mn<1)mx=mn+1;
+ g.strokeStyle="#56d6a3";g.beginPath();S.history.forEach((z,i)=>{let x=i*500/(S.history.length-1),y=165-(z.v-mn)/(mx-mn)*145;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+ g.fillStyle="#8fa8b8";g.font="11px system-ui";g.fillText("velocity history",8,15);
+}
+function loop(t){let dt=Math.min(.03,(t-last)/1000||0);last=t;step(dt);update();requestAnimationFrame(loop)}
+document.getElementById("launch").onclick=launch;
+document.getElementById("pause").onclick=()=>{S.paused=!S.paused;document.getElementById("mode").textContent=S.paused?"PAUSED":(S.running?"RUNNING":"READY")};
+document.getElementById("reset").onclick=reset;
+document.getElementById("up").onclick=()=>controlPitch(1);
+document.getElementById("down").onclick=()=>controlPitch(-1);
+document.getElementById("boost").onclick=()=>{S.running=true;keys.boost=true;setTimeout(()=>keys.boost=false,500)};
+addEventListener("keydown",e=>{keys[e.key]=true;if(e.key===" ")launch();if(e.key.toLowerCase()==="p")document.getElementById("pause").click();if(e.key.toLowerCase()==="r")reset()});
+addEventListener("keyup",e=>keys[e.key]=false);
+reset();requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
